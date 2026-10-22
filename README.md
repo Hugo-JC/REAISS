@@ -94,6 +94,9 @@ O comando de processamento aceita `-i/--input`, `-o/--output`, `--fps`,
 `--end`, `--atlas`, `--web-prefix`, `--stall-timeout` e `--dry-run`.
 Os comandos adicionais são `--preview` e `--clean-frames`. Executa
 `python cli/process_video.py --help` para descrições e valores predefinidos.
+As mensagens usam cores automaticamente em terminais interativos. Para controlar
+manualmente: `--color always` força as cores, `--color never` desativa-as, e
+`NO_COLOR=1` desativa-as por convenção.
 
 ## Pré-visualizar o site
 

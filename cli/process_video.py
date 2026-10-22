@@ -42,11 +42,64 @@ except ImportError:
 ENGINE_VERSION = "REAI-Scroll-v5"
 WEBP_MAX_DIM = 16383
 FRAME_GLOBS = ("frame_*.webp", "frame_*.jpg", "atlas_*.webp", "atlas_*.jpg")
+ANSI_COLORS = {
+    "red": "\033[31m",
+    "green": "\033[32m",
+    "yellow": "\033[33m",
+    "blue": "\033[34m",
+    "magenta": "\033[35m",
+    "cyan": "\033[36m",
+    "dim": "\033[2m",
+}
+COLOR_ENABLED = False
 
 
 # --------------------------------------------------------------------------- #
 # Utilitários
 # --------------------------------------------------------------------------- #
+def configure_color(mode: str) -> None:
+    global COLOR_ENABLED
+
+    if mode == "never" or (mode == "auto" and ("NO_COLOR" in os.environ or not sys.stdout.isatty())):
+        COLOR_ENABLED = False
+        return
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetStdHandle.argtypes = [ctypes.c_ulong]
+            kernel32.GetStdHandle.restype = ctypes.c_void_p
+            kernel32.GetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint)]
+            kernel32.GetConsoleMode.restype = ctypes.c_int
+            kernel32.SetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            kernel32.SetConsoleMode.restype = ctypes.c_int
+            for stream, stream_id in ((sys.stdout, -11), (sys.stderr, -12)):
+                if not stream.isatty():
+                    continue
+                handle = kernel32.GetStdHandle(stream_id)
+                console_mode = ctypes.c_uint()
+                if not kernel32.GetConsoleMode(handle, ctypes.byref(console_mode)):
+                    COLOR_ENABLED = False
+                    return
+                if not kernel32.SetConsoleMode(handle, console_mode.value | 0x0004):
+                    COLOR_ENABLED = False
+                    return
+        except (AttributeError, OSError):
+            COLOR_ENABLED = False
+            return
+
+    COLOR_ENABLED = True
+
+
+def paint(text: str, color: str, *, bold: bool = False) -> str:
+    if not COLOR_ENABLED:
+        return text
+    style = ("\033[1m" if bold else "") + ANSI_COLORS[color]
+    return f"{style}{text}\033[0m"
+
+
 def setup_console() -> None:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -56,7 +109,7 @@ def setup_console() -> None:
 
 
 def fail(msg: str, code: int = 1) -> None:
-    print(f"[-] {msg}", file=sys.stderr)
+    print(f"{paint('[-]', 'red', bold=True)} {msg}", file=sys.stderr)
     sys.exit(code)
 
 
@@ -278,7 +331,7 @@ def run_ffmpeg(cmd: list[str], total_out: int, label: str, stall_timeout: int) -
                     else:
                         elapsed = time.monotonic() - t0
                         eta = (elapsed / frame) * max(0, total_out - frame) if frame else 0
-                        print(f"\r    {label}: {frame}/{total_out} | ETA {fmt_time(eta)}   ",
+                        print(f"\r    {paint(label, 'cyan')}: {frame}/{total_out} | ETA {fmt_time(eta)}   ",
                               end="", flush=True)
                     last_frame = frame
             elif line.startswith("progress=end"):
@@ -568,7 +621,8 @@ def process_video(args: argparse.Namespace) -> None:
     if args.max_frames and args.max_frames > 0:
         max_fps = max(1, int(args.max_frames / eff_duration))
         if max_fps < fps:
-            print(f"[!] --max-frames={args.max_frames}: fps reduzido de {fps} para {max_fps}.")
+            print(f"{paint('[!]', 'yellow', bold=True)} --max-frames={args.max_frames}: "
+                  f"fps reduzido de {fps} para {max_fps}.")
             fps = max_fps
 
     interp = "off" if args.no_ai else resolve_interp(args.interp, info["fps"], fps)
@@ -589,17 +643,18 @@ def process_video(args: argparse.Namespace) -> None:
                  "Usa menos colunas/linhas.")
         variants.append({"name": name, "height": h, "width": w})
 
-    print("=" * 58)
-    print(f"🚀 {ENGINE_VERSION} - Passe único (split)")
-    print("=" * 58)
-    print(f"[*] Vídeo: {video}")
-    print(f"[*] Origem: {info['codec']} {info['width']}x{info['height']} @ {info['fps']:.2f}fps, "
+    print(paint("=" * 58, "magenta"))
+    print(paint(f"🚀 {ENGINE_VERSION} - Passe único (split)", "magenta", bold=True))
+    print(paint("=" * 58, "magenta"))
+    print(f"{paint('[*]', 'blue', bold=True)} Vídeo: {video}")
+    print(f"{paint('[*]', 'blue', bold=True)} Origem: {info['codec']} {info['width']}x{info['height']} @ {info['fps']:.2f}fps, "
           f"{info['duration']:.1f}s")
-    print(f"[*] Alvo: {fps}fps | {fmt.upper()} q{args.quality} | Interpolação: {interp} "
+    print(f"{paint('[*]', 'blue', bold=True)} Alvo: {fps}fps | {fmt.upper()} q{args.quality} | Interpolação: {interp} "
           f"| Variantes: " + ", ".join(f"{v['name']} {v['width']}x{v['height']}" for v in variants))
-    print(f"[*] Frames por variante: ~{expected}" + (f" (atlas {atlas[0]}x{atlas[1]})" if atlas else ""))
+    print(f"{paint('[*]', 'blue', bold=True)} Frames por variante: ~{expected}" +
+          (f" (atlas {atlas[0]}x{atlas[1]})" if atlas else ""))
     if expected > 300:
-        print("[!] Muitos frames (>300): usa --max-frames para páginas mais leves.")
+        print(f"{paint('[!]', 'yellow', bold=True)} Muitos frames (>300): usa --max-frames para páginas mais leves.")
 
     total_out = math.ceil(expected / (atlas[0] * atlas[1])) if atlas else expected
 
@@ -610,7 +665,8 @@ def process_video(args: argparse.Namespace) -> None:
     use_hw = args.hwaccel == "auto"
     if args.dry_run:
         cmd = make_cmd(use_hw)
-        print("\n[dry-run] Comando:\n  " + " ".join(f'"{c}"' if (" " in c or "[" in c) else c for c in cmd))
+        print(f"\n{paint('[dry-run]', 'cyan', bold=True)} Comando:\n  " +
+              " ".join(f'"{c}"' if (" " in c or "[" in c) else c for c in cmd))
         return
 
     for v in variants:
@@ -618,16 +674,17 @@ def process_video(args: argparse.Namespace) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         removed = clean_old_outputs(folder)
         if removed:
-            print(f"[*] {removed} ficheiros antigos removidos de {folder.name}/")
+            print(f"{paint('[*]', 'blue', bold=True)} {removed} ficheiros antigos removidos de {folder.name}/")
 
     t_start = time.monotonic()
-    print("\n[*] A exportar...")
+    print(f"\n{paint('[*]', 'blue', bold=True)} A exportar...")
     try:
         try:
             run_ffmpeg(make_cmd(use_hw), total_out, "Exportar", args.stall_timeout)
         except FFmpegError as exc:
             if use_hw and not exc.stalled:
-                print(f"\n[!] Falhou com hwaccel, a repetir sem aceleração por hardware...\n    {exc}")
+                print(f"\n{paint('[!]', 'yellow', bold=True)} Falhou com hwaccel, a repetir "
+                      f"sem aceleração por hardware...\n    {exc}")
                 for v in variants:
                     clean_old_outputs(out_dir / v["name"])
                 run_ffmpeg(make_cmd(False), total_out, "Exportar (CPU)", args.stall_timeout)
@@ -645,7 +702,7 @@ def process_video(args: argparse.Namespace) -> None:
         if not files:
             fail(f"O FFmpeg terminou sem gerar frames em {v['name']}. Verifica o vídeo de entrada.")
         size = sum(p.stat().st_size for p in files)
-        print(f"[+] {v['name']}: {len(files)} ficheiros, {human_size(size)}")
+        print(f"{paint('[+]', 'green', bold=True)} {v['name']}: {len(files)} ficheiros, {human_size(size)}")
 
         entry: dict = {
             "width": v["width"],
@@ -692,12 +749,12 @@ def process_video(args: argparse.Namespace) -> None:
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print("\n" + "=" * 58)
-    print(f"✨ Concluído em {fmt_time(time.monotonic() - t_start)}")
-    print(f"✨ Manifest: {manifest_path}")
+    print("\n" + paint("=" * 58, "green"))
+    print(paint(f"✨ Concluído em {fmt_time(time.monotonic() - t_start)}", "green", bold=True))
+    print(f"{paint('✨ Manifest:', 'green', bold=True)} {manifest_path}")
     for name, v in manifest_variants.items():
-        print(f"✨ {name}: {v['frameCount']} frames ({human_size(v['totalBytes'])})")
-    print("=" * 58)
+        print(f"{paint('✨', 'green')} {name}: {v['frameCount']} frames ({human_size(v['totalBytes'])})")
+    print(paint("=" * 58, "green"))
 
 
 # --------------------------------------------------------------------------- #
@@ -739,6 +796,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stall-timeout", type=int, default=180,
                    help="Segundos sem progresso até terminar o FFmpeg (0 = desativado)")
     p.add_argument("--dry-run", action="store_true", help="Mostra o comando sem executar")
+    p.add_argument("--color", choices=["auto", "always", "never"], default="auto",
+                   help="Cores no terminal: auto deteta TTY, always força, never desativa")
     return p
 
 
@@ -746,13 +805,15 @@ def main() -> None:
     setup_console()
     parser = build_parser()
     args = parser.parse_args()
+    configure_color(args.color)
 
     if args.clean_frames:
         if args.preview:
             parser.error("--preview não pode ser combinado com --clean-frames.")
         out_dir = Path(args.output).expanduser().resolve()
         removed = clear_generated_frames(out_dir)
-        print(f"[OK] Limpeza concluída: {removed} ficheiro(s) removido(s) de {out_dir}")
+        print(f"{paint('[OK]', 'green', bold=True)} Limpeza concluída: "
+              f"{removed} ficheiro(s) removido(s) de {out_dir}")
         return
 
     if args.preview:
@@ -761,8 +822,9 @@ def main() -> None:
             preview_path = create_preview(out_dir)
         except (OSError, ValueError) as exc:
             fail(f"Não foi possível criar a pré-visualização: {exc}")
-        print(f"[OK] Pré-visualização offline criada: {preview_path}")
-        print("[*] Abre este ficheiro no browser; não é necessário iniciar um servidor.")
+        print(f"{paint('[OK]', 'green', bold=True)} Pré-visualização offline criada: {preview_path}")
+        print(f"{paint('[*]', 'blue', bold=True)} Abre este ficheiro no browser; "
+              "não é necessário iniciar um servidor.")
         return
 
     if not args.input:
@@ -778,7 +840,7 @@ def main() -> None:
     try:
         process_video(args)
     except KeyboardInterrupt:
-        print("\n[!] Interrompido pelo utilizador.")
+        print(f"\n{paint('[!]', 'yellow', bold=True)} Interrompido pelo utilizador.")
         sys.exit(130)
 
 
