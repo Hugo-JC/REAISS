@@ -18,13 +18,37 @@ python -m pip install tqdm
 
 1. Coloca o vídeo numa pasta `Videos/` (ou usa um caminho completo).
 2. Abre PowerShell na raiz do projeto.
-3. Executa:
+3. Usa o lançador simples no PowerShell ou na Linha de Comandos:
 
 ```powershell
-python cli/process_video.py --input "Videos/seu_video.mp4" --output "assets/frames" --fps 30 --quality 70
+.\reai.bat processar "Videos\seu_video.mp4"
 ```
 
-O processamento gera um `manifest.json` e versões desktop/mobile dentro de `assets/frames/`.
+O processamento gera um `manifest.json` e versões desktop/mobile dentro de
+`assets/frames/`. Podes indicar FPS e qualidade opcionalmente:
+
+```powershell
+.\reai.bat processar "Videos\seu_video.mp4" 30 70
+```
+
+Para abrir um menu interativo, executa `.\reai.bat` sem argumentos. Os comandos
+simples disponíveis são:
+
+- `.\reai.bat processar "Videos\seu_video.mp4" [fps] [qualidade]` — processa o vídeo.
+- `.\reai.bat simular "Videos\seu_video.mp4"` — mostra o comando FFmpeg sem o executar.
+- `.\reai.bat prever` — gera e abre a pré-visualização offline.
+- `.\reai.bat limpar` — apaga os frames e ficheiros gerados.
+- `.\reai.bat site` — inicia o site local em `http://localhost:8000`.
+- `.\reai.bat opcoes` — mostra todas as opções avançadas da CLI.
+
+O atalho `.\run-reai.bat "Videos\seu_video.mp4"` continua disponível para
+processar um vídeo e iniciar o site local numa só execução.
+
+Também podes usar diretamente o processador com opções avançadas, por exemplo:
+
+```powershell
+python cli/process_video.py --input "Videos/seu_video.mp4" --fps 30 --quality 70 --format webp
+```
 
 Para verificar os parâmetros disponíveis:
 
@@ -32,10 +56,22 @@ Para verificar os parâmetros disponíveis:
 python cli/process_video.py --help
 ```
 
-Para apagar os frames gerados em `desktop` e `mobile` e o manifesto:
+Para gerar uma pré-visualização interativa offline — com seletor desktop/mobile,
+controlo de frames e suporte a atlases — a partir dos frames existentes:
 
 ```powershell
-python cli/process_video.py --clean-frames
+.\reai.bat prever
+```
+
+O comando cria `assets/frames/preview.html`. Abre esse ficheiro no browser; não
+precisas de iniciar um servidor. Para usar outro diretório, acrescenta
+`--output "caminho/para/frames"`.
+
+Para apagar os frames gerados em `desktop` e `mobile`, o manifesto e a
+pré-visualização:
+
+```powershell
+.\reai.bat limpar
 ```
 
 Por omissão, a limpeza usa `assets/frames`. Para indicar outro diretório:
@@ -47,7 +83,7 @@ python cli/process_video.py --clean-frames --output "caminho/para/frames"
 Para apenas inspecionar o comando que seria executado:
 
 ```powershell
-python cli/process_video.py --input "Videos/seu_video.mp4" --dry-run
+.\reai.bat simular "Videos\seu_video.mp4"
 ```
 
 ### Opções de processamento
@@ -56,8 +92,8 @@ O comando de processamento aceita `-i/--input`, `-o/--output`, `--fps`,
 `--max-frames`, `--format`, `--quality`, `--effort`, `--desktop-height`,
 `--mobile-height`, `--only`, `--interp`, `--no-ai`, `--hwaccel`, `--start`,
 `--end`, `--atlas`, `--web-prefix`, `--stall-timeout` e `--dry-run`.
-Executa `python cli/process_video.py --help` para descrições e valores
-predefinidos.
+Os comandos adicionais são `--preview` e `--clean-frames`. Executa
+`python cli/process_video.py --help` para descrições e valores predefinidos.
 
 ## Pré-visualizar o site
 
@@ -78,6 +114,7 @@ reai-scroll-engine/
 │   └── scroll-engine.js
 ├── cli/
 │   └── process_video.py
+├── reai.bat           # comandos simples e menu para Windows
 ├── assets/
 │   └── frames/       # gerado pela CLI; não incluído no ZIP
 ├── Videos/           # coloca aqui os teus vídeos de origem

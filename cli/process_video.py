@@ -31,6 +31,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+from urllib.parse import quote
 
 try:
     from tqdm import tqdm
@@ -337,7 +338,163 @@ def clear_generated_frames(out_dir: Path) -> int:
     if manifest.is_file() or manifest.is_symlink():
         manifest.unlink()
         removed += 1
+    preview = out_dir / "preview.html"
+    if preview.is_file() or preview.is_symlink():
+        preview.unlink()
+        removed += 1
     return removed
+
+
+def create_preview(out_dir: Path) -> Path:
+    manifest_path = out_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(f"Manifest não encontrado: {manifest_path}. Processa primeiro um vídeo.")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    variants = manifest.get("variants")
+    if not isinstance(variants, dict) or not variants:
+        raise ValueError("O manifest não contém variantes de frames válidas.")
+
+    preview_variants: dict[str, dict] = {}
+    for name, variant in variants.items():
+        if name not in ("desktop", "mobile") or not isinstance(variant, dict):
+            continue
+        files = variant.get("files")
+        if not isinstance(files, list) or not files:
+            continue
+
+        local_files = []
+        for file_path in files:
+            if not isinstance(file_path, str):
+                continue
+            filename = file_path.replace("\\", "/").rsplit("/", 1)[-1]
+            if not re.fullmatch(r"(?:frame|atlas)_\d+\.(?:webp|jpg)", filename):
+                continue
+            if (out_dir / name / filename).is_file():
+                local_files.append(f"{name}/{quote(filename)}")
+        if not local_files:
+            continue
+
+        atlas = variant.get("atlas")
+        cols = max(1, int(atlas.get("cols", 1))) if isinstance(atlas, dict) else 1
+        rows = max(1, int(atlas.get("rows", 1))) if isinstance(atlas, dict) else 1
+        frames_per_file = max(1, int(atlas.get("framesPerFile", 1))) if isinstance(atlas, dict) else 1
+        frame_count = int(variant.get("frameCount", len(local_files) * frames_per_file))
+        preview_variants[name] = {
+            "files": local_files,
+            "frameCount": max(1, min(frame_count, len(local_files) * frames_per_file)),
+            "width": max(1, int(variant.get("width", 1))),
+            "height": max(1, int(variant.get("height", 1))),
+            "cols": cols,
+            "rows": rows,
+            "framesPerFile": frames_per_file,
+        }
+    if not preview_variants:
+        raise ValueError("Não foram encontrados frames locais válidos. Verifica as pastas desktop e mobile.")
+
+    safe_data = json.dumps(preview_variants, ensure_ascii=True)
+    safe_data = (safe_data.replace("&", "\\u0026").replace("<", "\\u003c")
+                 .replace(">", "\\u003e").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+    html = """<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pré-visualização REAI Scroll</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #101114; color: #f3f4f6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    main { width: min(100%, 960px); }
+    header, .controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    h1 { margin: 0 0 4px; font-size: 1.25rem; }
+    p { margin: 0; color: #a1a1aa; }
+    select, button { border: 1px solid #3f3f46; border-radius: 8px; background: #1c1d22; color: inherit; padding: 10px 12px; }
+    .stage { min-height: 52vh; margin: 24px 0; display: grid; place-items: center; overflow: hidden; border: 1px solid #303138; border-radius: 14px; background: radial-gradient(#25262c, #151619); }
+    #frame { display: block; max-width: 100%; max-height: 68vh; object-fit: contain; }
+    #atlas { display: none; width: min(100%, 820px); background-repeat: no-repeat; background-size: 100% 100%; }
+    input[type=range] { width: 100%; accent-color: #a78bfa; }
+    .controls { justify-content: flex-start; flex-wrap: wrap; }
+    .controls input { flex: 1 1 220px; }
+    output { min-width: 90px; text-align: right; color: #c4b5fd; font-variant-numeric: tabular-nums; }
+    @media (max-width: 560px) { body { padding: 16px; } header { align-items: flex-start; flex-direction: column; } .stage { min-height: 42vh; } #frame { max-height: 58vh; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>REAI Scroll — pré-visualização</h1><p>Sequência local, sem servidor ou dependências.</p></div>
+      <select id="variant" aria-label="Variante da sequência"></select>
+    </header>
+    <section class="stage" aria-label="Frame atual">
+      <img id="frame" alt="Frame atual da sequência">
+      <div id="atlas" role="img" aria-label="Frame atual da sequência"></div>
+    </section>
+    <div class="controls">
+      <button id="previous" type="button" aria-label="Frame anterior">←</button>
+      <input id="scrubber" type="range" min="0" value="0" aria-label="Percorrer frames">
+      <button id="next" type="button" aria-label="Frame seguinte">→</button>
+      <output id="counter" for="scrubber"></output>
+    </div>
+  </main>
+  <script>
+    const variants = __VARIANTS__;
+    const selector = document.querySelector("#variant");
+    const scrubber = document.querySelector("#scrubber");
+    const image = document.querySelector("#frame");
+    const atlas = document.querySelector("#atlas");
+    const counter = document.querySelector("#counter");
+    let current = 0;
+
+    for (const name of Object.keys(variants)) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name === "desktop" ? "Desktop" : "Mobile";
+      selector.append(option);
+    }
+
+    function render() {
+      const variant = variants[selector.value];
+      const frameCount = variant.frameCount;
+      current = Math.max(0, Math.min(current, frameCount - 1));
+      scrubber.max = String(frameCount - 1);
+      scrubber.value = String(current);
+      counter.value = `${String(current + 1).padStart(4, "0")} / ${String(frameCount).padStart(4, "0")}`;
+
+      const fileIndex = Math.floor(current / variant.framesPerFile);
+      if (variant.framesPerFile > 1) {
+        image.style.display = "none";
+        atlas.style.display = "block";
+        const cell = current % variant.framesPerFile;
+        const col = cell % variant.cols;
+        const row = Math.floor(cell / variant.cols);
+        atlas.style.aspectRatio = `${variant.width * variant.cols} / ${variant.height * variant.rows}`;
+        atlas.style.backgroundImage = `url("${variant.files[fileIndex]}")`;
+        atlas.style.backgroundSize = `${variant.cols * 100}% ${variant.rows * 100}%`;
+        atlas.style.backgroundPosition = `${variant.cols > 1 ? col / (variant.cols - 1) * 100 : 0}% ${variant.rows > 1 ? row / (variant.rows - 1) * 100 : 0}%`;
+      } else {
+        atlas.style.display = "none";
+        image.style.display = "block";
+        image.src = variant.files[fileIndex];
+      }
+    }
+
+    selector.addEventListener("change", () => { current = 0; render(); });
+    scrubber.addEventListener("input", () => { current = Number(scrubber.value); render(); });
+    document.querySelector("#previous").addEventListener("click", () => { current -= 1; render(); });
+    document.querySelector("#next").addEventListener("click", () => { current += 1; render(); });
+    document.addEventListener("keydown", event => {
+      if (event.key === "ArrowLeft") { current -= 1; render(); }
+      if (event.key === "ArrowRight") { current += 1; render(); }
+    });
+    render();
+  </script>
+</body>
+</html>
+""".replace("__VARIANTS__", safe_data)
+    preview_path = out_dir / "preview.html"
+    preview_path.write_text(html, encoding="utf-8")
+    return preview_path
 
 
 def web_prefix(out_dir: Path, override: str | None) -> str:
@@ -554,7 +711,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-i", "--input", help="Vídeo de entrada (.mp4, .mov, .webm...)")
     p.add_argument("-o", "--output", default="assets/frames", help="Diretório de saída")
     p.add_argument("--clean-frames", action="store_true",
-                   help="Apaga frames gerados em desktop/mobile e o manifest.json")
+                   help="Apaga frames gerados, manifest.json e preview.html")
+    p.add_argument("--preview", action="store_true",
+                   help="Gera uma pré-visualização HTML offline a partir do manifest existente")
     p.add_argument("--fps", type=int, default=30, help="FPS alvo da sequência")
     p.add_argument("--max-frames", type=int, default=150,
                    help="Limite de frames por variante (reduz o fps automaticamente; 0 = sem limite)")
@@ -589,9 +748,21 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.clean_frames:
+        if args.preview:
+            parser.error("--preview não pode ser combinado com --clean-frames.")
         out_dir = Path(args.output).expanduser().resolve()
         removed = clear_generated_frames(out_dir)
         print(f"[OK] Limpeza concluída: {removed} ficheiro(s) removido(s) de {out_dir}")
+        return
+
+    if args.preview:
+        out_dir = Path(args.output).expanduser().resolve()
+        try:
+            preview_path = create_preview(out_dir)
+        except (OSError, ValueError) as exc:
+            fail(f"Não foi possível criar a pré-visualização: {exc}")
+        print(f"[OK] Pré-visualização offline criada: {preview_path}")
+        print("[*] Abre este ficheiro no browser; não é necessário iniciar um servidor.")
         return
 
     if not args.input:
