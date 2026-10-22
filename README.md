@@ -32,11 +32,32 @@ Para verificar os parâmetros disponíveis:
 python cli/process_video.py --help
 ```
 
+Para apagar os frames gerados em `desktop` e `mobile` e o manifesto:
+
+```powershell
+python cli/process_video.py --clean-frames
+```
+
+Por omissão, a limpeza usa `assets/frames`. Para indicar outro diretório:
+
+```powershell
+python cli/process_video.py --clean-frames --output "caminho/para/frames"
+```
+
 Para apenas inspecionar o comando que seria executado:
 
 ```powershell
 python cli/process_video.py --input "Videos/seu_video.mp4" --dry-run
 ```
+
+### Opções de processamento
+
+O comando de processamento aceita `-i/--input`, `-o/--output`, `--fps`,
+`--max-frames`, `--format`, `--quality`, `--effort`, `--desktop-height`,
+`--mobile-height`, `--only`, `--interp`, `--no-ai`, `--hwaccel`, `--start`,
+`--end`, `--atlas`, `--web-prefix`, `--stall-timeout` e `--dry-run`.
+Executa `python cli/process_video.py --help` para descrições e valores
+predefinidos.
 
 ## Pré-visualizar o site
 

@@ -324,6 +324,22 @@ def clean_old_outputs(folder: Path) -> int:
     return removed
 
 
+def clear_generated_frames(out_dir: Path) -> int:
+    removed = 0
+    for variant in ("desktop", "mobile"):
+        folder = out_dir / variant
+        for pattern in FRAME_GLOBS:
+            for path in folder.glob(pattern):
+                if path.is_file() or path.is_symlink():
+                    path.unlink()
+                    removed += 1
+    manifest = out_dir / "manifest.json"
+    if manifest.is_file() or manifest.is_symlink():
+        manifest.unlink()
+        removed += 1
+    return removed
+
+
 def web_prefix(out_dir: Path, override: str | None) -> str:
     if override is not None:
         return override.strip("/").replace("\\", "/")
@@ -535,8 +551,10 @@ def build_parser() -> argparse.ArgumentParser:
         description=f"{ENGINE_VERSION} - vídeo -> frames para animações por scroll",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("-i", "--input", required=True, help="Vídeo de entrada (.mp4, .mov, .webm...)")
+    p.add_argument("-i", "--input", help="Vídeo de entrada (.mp4, .mov, .webm...)")
     p.add_argument("-o", "--output", default="assets/frames", help="Diretório de saída")
+    p.add_argument("--clean-frames", action="store_true",
+                   help="Apaga frames gerados em desktop/mobile e o manifest.json")
     p.add_argument("--fps", type=int, default=30, help="FPS alvo da sequência")
     p.add_argument("--max-frames", type=int, default=150,
                    help="Limite de frames por variante (reduz o fps automaticamente; 0 = sem limite)")
@@ -567,7 +585,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     setup_console()
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.clean_frames:
+        out_dir = Path(args.output).expanduser().resolve()
+        removed = clear_generated_frames(out_dir)
+        print(f"[OK] Limpeza concluída: {removed} ficheiro(s) removido(s) de {out_dir}")
+        return
+
+    if not args.input:
+        parser.error("--input é obrigatório para processar um vídeo.")
 
     missing = [t for t in ("ffmpeg", "ffprobe") if shutil.which(t) is None]
     if missing:

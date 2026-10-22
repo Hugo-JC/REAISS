@@ -5,3 +5,6 @@ Videos/*
 !Videos/.gitkeep
 assets/frames/*
 !assets/frames/.gitkeep
+
+.vercel
+.env*
