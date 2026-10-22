@@ -108,6 +108,28 @@ python -m http.server 8000
 
 Abre `http://localhost:8000` no browser. O acesso via HTTP é necessário para o carregamento do manifesto.
 
+### Suavização do scroll
+
+O motor visual usa `auto` por predefinição: quando deteta passos discretos típicos
+da roda do rato, suaviza a transição entre frames sem alterar nem bloquear o
+scroll nativo da página. Trackpads e outras entradas de alta resolução continuam
+a acompanhar o movimento diretamente. A preferência do sistema
+`prefers-reduced-motion` desativa a interpolação.
+
+Para comparar sem suavização, acrescenta `?smooth=off` ao endereço, por exemplo
+`http://localhost:8000/?smooth=off`. Também podes configurar diretamente o motor
+com `smoothingMode: "off"` ou `smoothingMode: "auto"`.
+
+Isto é independente de `--interp`: essa opção da CLI altera os frames gerados
+pelo FFmpeg; a suavização automática afeta apenas a apresentação dos frames no
+browser.
+
+Para executar os testes do motor com Node.js:
+
+```powershell
+node --test tests/scroll-engine.test.js
+```
+
 ## Estrutura
 
 ```text
@@ -115,6 +137,8 @@ reai-scroll-engine/
 ├── index.html
 ├── js/
 │   └── scroll-engine.js
+├── tests/
+│   └── scroll-engine.test.js
 ├── cli/
 │   └── process_video.py
 ├── reai.bat           # comandos simples e menu para Windows

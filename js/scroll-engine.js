@@ -15,33 +15,78 @@ class ScrollSequenceEngine {
     this.getFrameUrl = options.getFrameUrl;
     this.onProgress = options.onProgress || (() => {});
     this.onComplete = options.onComplete || (() => {});
+    this.smoothingMode = options.smoothingMode || 'auto';
+    if (!['auto', 'off'].includes(this.smoothingMode)) {
+      throw new RangeError('smoothingMode must be "auto" or "off".');
+    }
+    this.motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)') || null;
+    this.prefersReducedMotion = this.motionQuery?.matches || false;
     this.images = new Array(this.frameCount).fill(null);
     this.loadedCount = 0;
     this.currentFrameIndex = 0;
+    this.targetFrameIndex = 0;
+    this.visualFramePosition = 0;
     this.lastRenderedIndex = -1;
-    this.rafId = 0;
+    this.scrollRafId = 0;
+    this.resizeRafId = 0;
+    this.smoothingRafId = 0;
+    this.lastSmoothingTime = null;
+    this.discreteWheelUntil = 0;
     this.resizeObserver = null;
     this.destroyed = false;
     this.lastGoodImage = null;
     this.handleScroll = this.handleScroll.bind(this);
     this.handleResize = this.handleResize.bind(this);
+    this.handleWheel = this.handleWheel.bind(this);
+    this.animateFrame = this.animateFrame.bind(this);
+    this.handleMotionPreferenceChange = this.handleMotionPreferenceChange.bind(this);
   }
 
   async init() {
     this.resizeCanvas();
     window.addEventListener('scroll', this.handleScroll, { passive: true });
     window.addEventListener('resize', this.handleResize, { passive: true });
+    window.addEventListener('wheel', this.handleWheel, { passive: true });
+    this.motionQuery?.addEventListener?.('change', this.handleMotionPreferenceChange);
     await this.preloadFrames();
     this.handleScroll();
     return this;
   }
 
   handleResize() {
-    if (this.rafId) cancelAnimationFrame(this.rafId);
-    this.rafId = requestAnimationFrame(() => {
+    if (this.resizeRafId) cancelAnimationFrame(this.resizeRafId);
+    this.resizeRafId = requestAnimationFrame(() => {
+      this.resizeRafId = 0;
       this.resizeCanvas();
       this.renderFrame(this.currentFrameIndex);
     });
+  }
+
+  handleWheel(event) {
+    if (this.smoothingMode !== 'auto' || this.prefersReducedMotion) return;
+    const deltaY = Number(event.deltaY) || 0;
+    if (deltaY === 0) return;
+    const delta = Math.abs(deltaY);
+    const coarsePixelStep = [100, 120].some((step) => {
+      const steps = Math.max(1, Math.round(delta / step));
+      return delta >= 60 && Math.abs(delta - steps * step) <= 1.5;
+    });
+    if (event.deltaMode !== 0 || coarsePixelStep) {
+      this.discreteWheelUntil = performance.now() + 220;
+    } else {
+      this.discreteWheelUntil = 0;
+    }
+  }
+
+  handleMotionPreferenceChange(event) {
+    this.prefersReducedMotion = event.matches;
+    if (!this.prefersReducedMotion || !this.smoothingRafId) return;
+    cancelAnimationFrame(this.smoothingRafId);
+    this.smoothingRafId = 0;
+    this.lastSmoothingTime = null;
+    this.visualFramePosition = this.targetFrameIndex;
+    this.currentFrameIndex = this.targetFrameIndex;
+    this.renderFrame(this.currentFrameIndex);
   }
 
   resizeCanvas() {
@@ -98,20 +143,67 @@ class ScrollSequenceEngine {
 
   handleScroll() {
     if (this.destroyed) return;
-    if (this.rafId) cancelAnimationFrame(this.rafId);
-    this.rafId = requestAnimationFrame(() => {
+    if (this.scrollRafId) cancelAnimationFrame(this.scrollRafId);
+    this.scrollRafId = requestAnimationFrame(() => {
+      this.scrollRafId = 0;
       const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
       const fraction = Math.min(1, Math.max(0, window.scrollY / maxScroll));
       const target = Math.min(this.frameCount - 1, Math.round(fraction * (this.frameCount - 1)));
-      if (target !== this.currentFrameIndex) {
-        this.currentFrameIndex = target;
-        this.renderFrame(target);
+      this.targetFrameIndex = target;
+      const smooth = this.smoothingMode === 'auto'
+        && !this.prefersReducedMotion
+        && performance.now() <= this.discreteWheelUntil;
+      if (!smooth) {
+        if (this.smoothingRafId) cancelAnimationFrame(this.smoothingRafId);
+        this.smoothingRafId = 0;
+        this.lastSmoothingTime = null;
+        this.visualFramePosition = target;
+        if (target !== this.currentFrameIndex || this.lastRenderedIndex !== target) {
+          this.currentFrameIndex = target;
+          this.renderFrame(target);
+        }
+      } else if (!this.smoothingRafId) {
+        this.lastSmoothingTime = null;
+        this.smoothingRafId = requestAnimationFrame(this.animateFrame);
       }
     });
   }
 
+  animateFrame(timestamp) {
+    this.smoothingRafId = 0;
+    if (this.destroyed || this.prefersReducedMotion) return;
+
+    const elapsed = this.lastSmoothingTime === null
+      ? 16
+      : Math.max(1, Math.min(64, timestamp - this.lastSmoothingTime));
+    this.lastSmoothingTime = timestamp;
+    const easing = 1 - Math.exp(-elapsed / 85);
+    const distance = this.targetFrameIndex - this.visualFramePosition;
+    if (Math.abs(distance) < 0.05) {
+      this.visualFramePosition = this.targetFrameIndex;
+    } else {
+      this.visualFramePosition += distance * easing;
+    }
+
+    const nextFrame = Math.max(
+      0,
+      Math.min(this.frameCount - 1, Math.round(this.visualFramePosition)),
+    );
+    if (nextFrame !== this.currentFrameIndex) {
+      this.currentFrameIndex = nextFrame;
+      this.renderFrame(nextFrame);
+    }
+
+    if (this.visualFramePosition !== this.targetFrameIndex) {
+      this.smoothingRafId = requestAnimationFrame(this.animateFrame);
+    } else {
+      this.lastSmoothingTime = null;
+    }
+  }
+
   renderFrame(index) {
     if (!this.ctx || this.destroyed) return;
+    index = Math.max(0, Math.min(this.frameCount - 1, index));
     let image = this.images[index];
     if (image) this.lastGoodImage = image;
     else image = this.lastGoodImage || this.images.find(Boolean);
@@ -136,7 +228,14 @@ class ScrollSequenceEngine {
     this.destroyed = true;
     window.removeEventListener('scroll', this.handleScroll);
     window.removeEventListener('resize', this.handleResize);
-    if (this.rafId) cancelAnimationFrame(this.rafId);
+    window.removeEventListener('wheel', this.handleWheel);
+    this.motionQuery?.removeEventListener?.('change', this.handleMotionPreferenceChange);
+    for (const rafId of [this.scrollRafId, this.resizeRafId, this.smoothingRafId]) {
+      if (rafId) cancelAnimationFrame(rafId);
+    }
+    this.scrollRafId = 0;
+    this.resizeRafId = 0;
+    this.smoothingRafId = 0;
   }
 }
 

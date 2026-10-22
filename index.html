@@ -951,6 +951,10 @@
         const reduceMotion = window.matchMedia(
           "(prefers-reduced-motion: reduce)",
         ).matches;
+        const smoothingMode =
+          new URLSearchParams(window.location.search).get("smooth") === "off"
+            ? "off"
+            : "auto";
         const translations = {
           pt: {
             eyebrow: "CLI · MOTOR VISUAL",
@@ -1129,6 +1133,7 @@
           const engine = new ScrollSequenceEngine({
             canvas,
             frameCount: frameUrls.length || totalFrames,
+            smoothingMode,
             getFrameUrl: (index) => frameUrls[index],
             onProgress: (percent) => {
               const value = Math.round(percent);
